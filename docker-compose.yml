@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  # 1. Apache Kafka & Zookeeper (Real-Time Event Streaming)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: fraud-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: fraud-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+
+  # 2. MLflow Tracking Server (Experiment & Metric Registry)
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.11.0
+    container_name: fraud-mlflow
+    ports:
+      - "5000:5000"
+    command: mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root /mlflow/artifacts --host 0.0.0.0 --port 5000
+    volumes:
+      - ./data/mlflow:/mlflow
+
+  # 3. FastAPI Ingestion & Real-Time Fraud Scoring Engine
+  api-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: fraud-fastapi
+    ports:
+      - "8000:8000"
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      DATABASE_URL: sqlite:///./data/fraud_detection.db
+
+  # 4. React Analyst Dashboard & Web Gateway
+  dashboard-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fraud-dashboard
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-service
+    environment:
+      NODE_ENV: production
